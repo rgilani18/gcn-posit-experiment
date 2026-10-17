@@ -1,0 +1,7 @@
+run,epochs_logged,training_loss_final,validation_loss_final,training_accuracy_final,validation_accuracy_final
+training_log_fp16,2,7.88255,33.1821,0.257143,0.158
+training_log_fp16_100ep,22,14.14063,13.3164,0.142857,0.072
+training_log_fp16_adamdouble,55,0.0909116,0.850586,1.0,0.764
+training_log_fp16_diag,1,1.94597,9.90239,0.107143,0.112
+training_log_posit16_100ep,51,0.0118866,0.870519,1.0,0.756
+training_log_posit16_adam,2,1.864258,1.87621,0.378571,0.326

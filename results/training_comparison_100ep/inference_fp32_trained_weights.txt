@@ -1,0 +1,20 @@
+GCN inference comparison: FP32 vs Posit32 vs double
+Weights: gcn_trained_weights_fp32.bin
+No training or weight updates are performed.
+
+
+--- FP32 metrics ---
+Train: accuracy=0.264285714286 (37/140), cross-entropy=1.88760336265
+Validation: accuracy=0.316 (158/500), cross-entropy=1.9110412923
+Test: accuracy=0.278 (278/1000), cross-entropy=1.92188451289
+
+--- Posit32 metrics ---
+Train: accuracy=0.264285714286 (37/140), cross-entropy=1.88760336234
+Validation: accuracy=0.316 (158/500), cross-entropy=1.91104129194
+Test: accuracy=0.278 (278/1000), cross-entropy=1.92188451324
+
+--- Logit errors against double arithmetic ---
+FP32 all nodes | max absolute error=2.09163819265e-07 | RMSE=8.52984623753e-09 | compared logits=18956
+Posit32 all nodes | max absolute error=7.77802267038e-09 | RMSE=5.09955772092e-10 | compared logits=18956
+FP32 test nodes | max absolute error=6.23384424636e-08 | RMSE=7.95669606702e-09 | compared logits=7000
+Posit32 test nodes | max absolute error=5.99610860963e-09 | RMSE=5.04340747156e-10 | compared logits=7000

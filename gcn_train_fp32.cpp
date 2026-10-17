@@ -1,0 +1,422 @@
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <cstdlib>
+#include <fstream>
+#include <iostream>
+#include <random>
+#include <string>
+#include <vector>
+
+#include <sw/universal/number/cfloat/cfloat.hpp>
+
+using namespace std;
+using FP32 = sw::universal::fp32;
+
+constexpr int N = 2708;
+constexpr int F = 1433;
+constexpr int H = 16;
+constexpr int C = 7;
+constexpr int E = 13264;
+
+template <typename T>
+vector<T> load_binary(const string& filename, size_t count) {
+    vector<T> data(count);
+    ifstream file(filename, ios::binary);
+
+    if (!file) {
+        cerr << "Cannot open " << filename << '\n';
+        exit(1);
+    }
+
+    file.read(reinterpret_cast<char*>(data.data()),
+              static_cast<streamsize>(count * sizeof(T)));
+
+    if (file.gcount() != static_cast<streamsize>(count * sizeof(T))) {
+        cerr << "Incorrect file size: " << filename << '\n';
+        exit(1);
+    }
+
+    return data;
+}
+
+// Save weights as float32 values in this order:
+// W1, b1, W2, b2.
+bool save_weights(const string& filename,
+                  const vector<FP32>& w1,
+                  const vector<FP32>& b1,
+                  const vector<FP32>& w2,
+                  const vector<FP32>& b2) {
+    ofstream file(filename, ios::binary);
+
+    if (!file) {
+        cerr << "Cannot write " << filename << '\n';
+        return false;
+    }
+
+    auto write_vector = [&](const vector<FP32>& values) {
+        for (const auto& value : values) {
+            float v = static_cast<float>(static_cast<double>(value));
+            file.write(reinterpret_cast<const char*>(&v), sizeof(v));
+        }
+    };
+
+    write_vector(w1);
+    write_vector(b1);
+    write_vector(w2);
+    write_vector(b2);
+
+    return static_cast<bool>(file);
+}
+
+int main(int argc, char* argv[]) {
+    int epochs = 100;
+    const double learning_rate = 0.01;
+
+    if (argc > 1) {
+        try {
+            epochs = stoi(argv[1]);
+        } catch (...) {
+            cerr << "Usage: " << argv[0] << " [epochs]\n";
+            return 1;
+        }
+    }
+
+    if (epochs < 1) {
+        cerr << "Epoch count must be at least 1\n";
+        return 1;
+    }
+
+    // Load the same Cora inputs used by the gradient-check program.
+    auto xr = load_binary<float>("features_fp32.bin", N * F);
+    auto er = load_binary<float>("norm_edge_weight_fp32.bin", E);
+    auto edges = load_binary<int64_t>("norm_edge_index_int64.bin", 2 * E);
+    auto labels = load_binary<int64_t>("labels_int64.bin", N);
+    auto mask = load_binary<uint8_t>("train_mask_uint8.bin", N);
+
+    vector<FP32> x(N * F), ew(E);
+    vector<FP32> w1(H * F), b1(H, FP32(0));
+    vector<FP32> w2(C * H), b2(C, FP32(0));
+
+    for (size_t i = 0; i < x.size(); ++i)
+        x[i] = FP32(xr[i]);
+
+    for (int e = 0; e < E; ++e)
+        ew[e] = FP32(er[e]);
+
+    // Validate graph indices and labels before training.
+    for (int e = 0; e < E; ++e) {
+        int64_t src = edges[e];
+        int64_t dst = edges[E + e];
+
+        if (src < 0 || src >= N || dst < 0 || dst >= N) {
+            cerr << "Invalid edge index at edge " << e << '\n';
+            return 1;
+        }
+    }
+
+    int train_count = 0;
+    for (int n = 0; n < N; ++n) {
+        if (mask[n]) {
+            if (labels[n] < 0 || labels[n] >= C) {
+                cerr << "Invalid label at node " << n << '\n';
+                return 1;
+            }
+            ++train_count;
+        }
+    }
+
+    if (train_count == 0) {
+        cerr << "No training nodes found\n";
+        return 1;
+    }
+
+    // Reproducible initialization, matching the gradient-check program.
+    mt19937 rng(42);
+    normal_distribution<float> dist(0.0f, 1.0f);
+
+    for (auto& w : w1)
+        w = FP32(dist(rng) * sqrt(2.0f / F));
+
+    for (auto& w : w2)
+        w = FP32(dist(rng) * sqrt(2.0f / H));
+
+    if (!save_weights("gcn_initial_weights_fp32.bin", w1, b1, w2, b2))
+        return 1;
+
+    cout << "Universal FP32 GCN training\n";
+    cout << "Nodes: " << N << ", features: " << F
+         << ", hidden units: " << H << ", classes: " << C << '\n';
+    cout << "Edges: " << E << ", training nodes: " << train_count << '\n';
+    cout << "Epochs: " << epochs
+         << ", learning rate: " << learning_rate << '\n';
+    cout << "Initial weights saved to gcn_initial_weights_fp32.bin\n";
+
+    for (int epoch = 1; epoch <= epochs; ++epoch) {
+        // ------------------------------------------------------------
+        // 1. Forward pass: first graph-convolution layer.
+        // support1 = X * W1^T
+        // hidden = ReLU(A * support1 + b1)
+        // ------------------------------------------------------------
+        vector<FP32> support1(N * H, FP32(0));
+
+        for (int n = 0; n < N; ++n) {
+            for (int h = 0; h < H; ++h) {
+                FP32 sum = FP32(0);
+
+                for (int f = 0; f < F; ++f)
+                    sum += x[n * F + f] * w1[h * F + f];
+
+                support1[n * H + h] = sum;
+            }
+        }
+
+        vector<FP32> aggregated1(N * H, FP32(0));
+
+        for (int e = 0; e < E; ++e) {
+            int src = static_cast<int>(edges[e]);
+            int dst = static_cast<int>(edges[E + e]);
+
+            for (int h = 0; h < H; ++h)
+                aggregated1[dst * H + h] +=
+                    ew[e] * support1[src * H + h];
+        }
+
+        vector<FP32> pre_relu(N * H, FP32(0));
+        vector<FP32> hidden(N * H, FP32(0));
+
+        for (int n = 0; n < N; ++n) {
+            for (int h = 0; h < H; ++h) {
+                FP32 v = aggregated1[n * H + h] + b1[h];
+                pre_relu[n * H + h] = v;
+                hidden[n * H + h] = v > FP32(0) ? v : FP32(0);
+            }
+        }
+
+        // ------------------------------------------------------------
+        // 2. Forward pass: second graph-convolution layer.
+        // support2 = hidden * W2^T
+        // logits = A * support2 + b2
+        // ------------------------------------------------------------
+        vector<FP32> support2(N * C, FP32(0));
+
+        for (int n = 0; n < N; ++n) {
+            for (int c = 0; c < C; ++c) {
+                FP32 sum = FP32(0);
+
+                for (int h = 0; h < H; ++h)
+                    sum += hidden[n * H + h] * w2[c * H + h];
+
+                support2[n * C + c] = sum;
+            }
+        }
+
+        vector<FP32> logits(N * C, FP32(0));
+
+        for (int e = 0; e < E; ++e) {
+            int src = static_cast<int>(edges[e]);
+            int dst = static_cast<int>(edges[E + e]);
+
+            for (int c = 0; c < C; ++c)
+                logits[dst * C + c] +=
+                    ew[e] * support2[src * C + c];
+        }
+
+        for (int n = 0; n < N; ++n)
+            for (int c = 0; c < C; ++c)
+                logits[n * C + c] += b2[c];
+
+        // ------------------------------------------------------------
+        // 3. Stable mean cross-entropy and output gradients.
+        // Softmax/loss and gradient accumulators use double.
+        // ------------------------------------------------------------
+        double loss = 0.0;
+        vector<double> dlogits(N * C, 0.0);
+        int correct = 0;
+
+        for (int n = 0; n < N; ++n) {
+            if (!mask[n]) continue;
+
+            int y = static_cast<int>(labels[n]);
+            int predicted = 0;
+
+            for (int c = 1; c < C; ++c) {
+                if (static_cast<double>(logits[n * C + c]) >
+                    static_cast<double>(logits[n * C + predicted])) {
+                    predicted = c;
+                }
+            }
+
+            if (predicted == y)
+                ++correct;
+
+            double max_logit = static_cast<double>(logits[n * C]);
+
+            for (int c = 1; c < C; ++c)
+                max_logit = max(
+                    max_logit,
+                    static_cast<double>(logits[n * C + c])
+                );
+
+            double exp_sum = 0.0;
+
+            for (int c = 0; c < C; ++c)
+                exp_sum += exp(
+                    static_cast<double>(logits[n * C + c]) - max_logit
+                );
+
+            loss += max_logit + log(exp_sum)
+                  - static_cast<double>(logits[n * C + y]);
+
+            for (int c = 0; c < C; ++c) {
+                double probability =
+                    exp(static_cast<double>(logits[n * C + c]) - max_logit)
+                    / exp_sum;
+
+                dlogits[n * C + c] =
+                    probability - (c == y ? 1.0 : 0.0);
+            }
+        }
+
+        loss /= train_count;
+
+        for (int n = 0; n < N; ++n) {
+            if (!mask[n]) continue;
+
+            for (int c = 0; c < C; ++c)
+                dlogits[n * C + c] /= train_count;
+        }
+
+        double train_accuracy =
+            static_cast<double>(correct) / train_count;
+
+        // ------------------------------------------------------------
+        // 4. Backpropagate through the second graph aggregation.
+        // ------------------------------------------------------------
+        vector<double> dSupport2(N * C, 0.0);
+
+        for (int e = 0; e < E; ++e) {
+            int src = static_cast<int>(edges[e]);
+            int dst = static_cast<int>(edges[E + e]);
+
+            for (int c = 0; c < C; ++c)
+                dSupport2[src * C + c] +=
+                    static_cast<double>(ew[e]) * dlogits[dst * C + c];
+        }
+
+        vector<double> dW2(C * H, 0.0);
+        vector<double> db2(C, 0.0);
+
+        for (int n = 0; n < N; ++n) {
+            for (int c = 0; c < C; ++c) {
+                db2[c] += dlogits[n * C + c];
+
+                for (int h = 0; h < H; ++h)
+                    dW2[c * H + h] +=
+                        dSupport2[n * C + c] *
+                        static_cast<double>(hidden[n * H + h]);
+            }
+        }
+
+        // Backpropagate through W2 and the ReLU activation.
+        vector<double> dHidden(N * H, 0.0);
+
+        for (int n = 0; n < N; ++n) {
+            for (int h = 0; h < H; ++h) {
+                double g = 0.0;
+
+                for (int c = 0; c < C; ++c)
+                    g += dSupport2[n * C + c] *
+                         static_cast<double>(w2[c * H + h]);
+
+                dHidden[n * H + h] =
+                    pre_relu[n * H + h] > FP32(0) ? g : 0.0;
+            }
+        }
+
+        // Backpropagate through the first graph aggregation.
+        vector<double> dSupport1(N * H, 0.0);
+
+        for (int e = 0; e < E; ++e) {
+            int src = static_cast<int>(edges[e]);
+            int dst = static_cast<int>(edges[E + e]);
+
+            for (int h = 0; h < H; ++h)
+                dSupport1[src * H + h] +=
+                    static_cast<double>(ew[e]) * dHidden[dst * H + h];
+        }
+
+        vector<double> dW1(H * F, 0.0);
+        vector<double> db1(H, 0.0);
+
+        for (int n = 0; n < N; ++n) {
+            for (int h = 0; h < H; ++h) {
+                db1[h] += dHidden[n * H + h];
+
+                for (int f = 0; f < F; ++f)
+                    dW1[h * F + f] +=
+                        dSupport1[n * H + h] *
+                        static_cast<double>(x[n * F + f]);
+            }
+        }
+
+        // Reject invalid gradients instead of silently updating weights.
+        bool gradients_finite = true;
+
+        for (double g : dW1)
+            gradients_finite = gradients_finite && isfinite(g);
+        for (double g : db1)
+            gradients_finite = gradients_finite && isfinite(g);
+        for (double g : dW2)
+            gradients_finite = gradients_finite && isfinite(g);
+        for (double g : db2)
+            gradients_finite = gradients_finite && isfinite(g);
+
+        if (!gradients_finite || !isfinite(loss)) {
+            cerr << "Non-finite loss or gradient at epoch "
+                 << epoch << '\n';
+            return 1;
+        }
+
+        // ------------------------------------------------------------
+        // 5. Gradient-descent update.
+        // The next epoch recomputes forward pass and gradients.
+        // ------------------------------------------------------------
+        for (size_t i = 0; i < w1.size(); ++i)
+            w1[i] = FP32(
+                static_cast<double>(w1[i]) - learning_rate * dW1[i]
+            );
+
+        for (size_t i = 0; i < b1.size(); ++i)
+            b1[i] = FP32(
+                static_cast<double>(b1[i]) - learning_rate * db1[i]
+            );
+
+        for (size_t i = 0; i < w2.size(); ++i)
+            w2[i] = FP32(
+                static_cast<double>(w2[i]) - learning_rate * dW2[i]
+            );
+
+        for (size_t i = 0; i < b2.size(); ++i)
+            b2[i] = FP32(
+                static_cast<double>(b2[i]) - learning_rate * db2[i]
+            );
+
+        if (epoch == 1 || epoch % 10 == 0 || epoch == epochs) {
+            cout << "Epoch " << epoch
+                 << "/" << epochs
+                 << " | loss before update: " << loss
+                 << " | training accuracy before update: "
+                 << train_accuracy << '\n';
+        }
+    }
+
+    if (!save_weights("gcn_trained_weights_fp32.bin", w1, b1, w2, b2))
+        return 1;
+
+    cout << "Training complete.\n";
+    cout << "Final weights saved to gcn_trained_weights_fp32.bin\n";
+    cout << "Initial weights saved to gcn_initial_weights_fp32.bin\n";
+
+    return 0;
+}
