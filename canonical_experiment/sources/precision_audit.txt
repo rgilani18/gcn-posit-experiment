@@ -1,0 +1,24 @@
+FP32 vs Posit32 GCN precision audit
+===================================
+
+FP32 trainer:
+- Inputs, edge weights, parameters, forward pass and logits: FP32
+- Loss/softmax: double intermediates
+- Backpropagation gradients: FP32
+- Weight updates: FP32 arithmetic
+- Saved parameters: float32 serialization
+
+Posit32 trainer:
+- Inputs, edge weights, parameters, forward pass and logits: Posit32<32,2>
+- Loss/softmax: double intermediates
+- Backpropagation gradients: mostly double
+- Weight updates: gradients converted to Posit32 before update arithmetic
+- Saved parameters: float32 serialization
+
+Current classification:
+Mixed-precision training implementations; not fully native-format
+end-to-end training.
+
+Important:
+Compare identical initialization, data splits, training policy and
+evaluation procedure before drawing precision conclusions.

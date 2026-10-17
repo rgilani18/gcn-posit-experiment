@@ -1,0 +1,6 @@
+Universal FP16 GCN evaluation
+Checkpoint: gcn_trained_weights_fp16_100ep.bin
+Metrics below use the saved model without training updates.
+Training nodes: 140 | accuracy: 0.142857 (20/140) | cross-entropy: 10.5381
+Validation nodes: 500 | accuracy: 0.114 (57/500) | cross-entropy: 8.73263
+Test nodes: 1000 | accuracy: 0.103 (103/1000) | cross-entropy: 8.51776

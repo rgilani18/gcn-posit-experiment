@@ -1,0 +1,18 @@
+Numerical error against double-precision reference
+Shared checkpoint: gcn_trained_weights_fp32.bin
+All formats use the same stored inputs, graph, and master weights.
+
+FP32 | support1 | MAE=9.17844e-09 | RMSE=1.34892e-08 | MaxAbs=1.22702e-07
+FP16 | support1 | MAE=8.08993e-05 | RMSE=0.000116861 | MaxAbs=0.00112444
+Posit16 | support1 | MAE=4.34428e-05 | RMSE=5.77893e-05 | MaxAbs=0.000327969
+FP32 | hidden_after_relu | MAE=2.83821e-09 | RMSE=5.78965e-09 | MaxAbs=1.99037e-07
+FP16 | hidden_after_relu | MAE=2.52877e-05 | RMSE=5.05746e-05 | MaxAbs=0.000756326
+Posit16 | hidden_after_relu | MAE=1.45133e-05 | RMSE=2.74172e-05 | MaxAbs=0.000769178
+FP32 | support2 | MAE=7.4049e-09 | RMSE=1.04404e-08 | MaxAbs=1.66953e-07
+FP16 | support2 | MAE=6.66451e-05 | RMSE=9.18262e-05 | MaxAbs=0.000716997
+Posit16 | support2 | MAE=3.69114e-05 | RMSE=4.86445e-05 | MaxAbs=0.000395578
+FP32 | final_logits | MAE=5.71358e-09 | RMSE=8.52985e-09 | MaxAbs=2.09164e-07
+FP16 | final_logits | MAE=5.14524e-05 | RMSE=7.69202e-05 | MaxAbs=0.00295012
+Posit16 | final_logits | MAE=2.94022e-05 | RMSE=3.89474e-05 | MaxAbs=0.000386641
+
+Saved CSV: numerical_error_fp32_fp16_posit16.csv
