@@ -1,3 +1,0 @@
-epoch,train_loss_before_update,train_accuracy_before_update,val_loss_after_update,val_accuracy_after_update
-1,1.957031e+00,0.107143,1.91153,0.314
-2,1.864258e+00,0.378571,1.87621,0.326

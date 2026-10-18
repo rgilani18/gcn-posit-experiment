@@ -1,6 +1,0 @@
-Universal Posit16 GCN evaluation
-Checkpoint: gcn_trained_weights_posit16_100ep.bin
-Metrics below use the saved model without training updates.
-Training nodes: 140 | accuracy: 1 (140/140) | cross-entropy: 0.0251499
-Validation nodes: 500 | accuracy: 0.754 (377/500) | cross-entropy: 0.844402
-Test nodes: 1000 | accuracy: 0.794 (794/1000) | cross-entropy: 0.689849
