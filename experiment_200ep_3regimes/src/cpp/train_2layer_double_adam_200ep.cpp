@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-// Pure Stillwater Universal (NO PyTorch)
+//Stillwater Universal
 #include <universal/number/cfloat/cfloat.hpp>
 #include <universal/number/posit/posit.hpp>
 
